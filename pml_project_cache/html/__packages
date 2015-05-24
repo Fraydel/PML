@@ -1,0 +1,11 @@
+base
+dplyr
+Rcpp
+Amelia
+corrplot
+reshape2
+ggplot2
+outliers
+lattice
+caret
+randomForest
