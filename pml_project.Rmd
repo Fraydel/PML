@@ -1,0 +1,189 @@
+---
+title: "Practical Machine Learning - Quantified Self Report"
+output: 
+    html_document:
+    fig_height: 9
+    fig_width: 9
+---
+
+### Instructions
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, your goal will be to use data from __accelerometers on the belt, forearm, arm, and dumbell__ of 6 participants. They were asked to perform __barbell lifts correctly and incorrectly__ in 5 different ways: 
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: __exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).__
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. 
+
+Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).
+
+More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har).
+
+```{r, echo=TRUE, message=FALSE, results='hide'}
+library(dplyr)
+library(Amelia)
+library(reshape2)
+library(ggplot2)
+library(corrplot)
+library(randomForest)
+```
+
+### Getting and Cleaning data
+
+```{r, cache=TRUE}
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+train_file <- "./data/pml-training.csv"
+test_file <- "./data/pml-testing.csv"
+
+if (!file.exists("./data")) {
+    dir.create("./data")
+}
+
+if (!file.exists(train_file)) {
+    download.file(train_url, destfile=train_file)
+}
+
+if (!file.exists(test_file)) {
+    download.file(test_url, destfile=test_file)
+}
+```
+
+Now I'll read the files 
+
+```{r, cache=TRUE}
+train_csv <- read.csv(train_file, na.strings=c("NA", "", "#DIV/0!"), header=TRUE, as.is=TRUE, 
+                       stringsAsFactors=FALSE, sep=",")
+test_csv <- read.csv(test_file, na.strings=c("NA", "", "#DIV/0!"), header=TRUE, as.is=TRUE, 
+                       stringsAsFactors=FALSE, sep=",")
+```
+
+Training data consists on `r dim(train_csv)[1]` cases and `r dim(train_csv)[2]` variables, while test data set consists on `r dim(test_csv)[1]` cases and `r dim(test_csv)[2]` variables.
+
+To explore missing data, I'll use the Amelia library: 
+
+```{r, warning=FALSE, cache=FALSE, fig.align='center'}
+layout(matrix(c(1,2),2,2))
+
+missmap(test_csv, main="test_csv Missing Map")
+
+missmap(train_csv, main="train_csv Missing Map")
+```
+
+
+As we can see, we have a great deal of missing values in this data sets, so I'll start by selecting the complete variables and store them into a data frame:
+
+```{r, cache=FALSE}
+# There is a single case for train_csv with NA as classe value, so I had to delete it.
+sum(is.na(train_csv$classe))
+train_csv <- train_csv[-which(is.na(train_csv$classe)), ]
+
+train_df <- train_csv[, colSums(is.na(train_csv))==0]
+test_df <- test_csv[, colSums(is.na(test_csv))==0]
+```
+
+Now, training data consists on `r dim(train_df)[1]` cases and `r dim(train_df)[2]` variables, while test data set consists on `r dim(test_df)[1]` cases and `r dim(test_df)[2]` variables.
+
+Next, as the instructions say only to compute the prediction using __accelerometers on the belt, forearm, arm, and dumbell__ I'll pass only these to clean the datasets:
+
+```{r, cache=FALSE}
+clean_train_df <- select(train_df, contains("belt"), contains("forearm"), contains("arm"), contains("dumbbell"), one_of("classe"))
+
+clean_test_df <- select(test_df, contains("belt"), contains("forearm"), contains("arm"), contains("dumbbell"))
+```
+
+Please find the complete set of exploratory plots for the predictors in the appendix section.
+
+### Data Modeling
+
+We have to split the super clean data set into a training set (70%) and a validation data set (30%) to be used for cross validation.
+
+```{r, cache=TRUE, results='hide'}
+set.seed(22501)
+index_train <- createDataPartition(clean_train_df$classe, p=0.7, list=FALSE)
+train_data <- clean_train_df[index_train, ]
+test_data <- clean_train_df[-index_train, ]
+
+
+random_forest <- randomForest(as.factor(classe) ~ ., data=train_data, ntree=500, do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
+```
+
+```{r, cache=TRUE}
+random_forest
+
+varImpPlot(random_forest)
+```
+
+The model has an OOB estimate of  error rate of 0.55%
+
+### Prediction based on fitted model
+
+```{r}
+predict_rf <- predict(random_forest, test_df, type="class")
+
+predict_rf <- as.character(predict_rf)
+
+predict_rf
+```
+
+### Appendix: Figures
+
+#### 1. Exploratory Plots
+```{r, cache=TRUE, warning=FALSE, message=FALSE}
+melted_clean_train_df <- melt(clean_train_df)
+```
+
+##### Belt group boxplots
+
+```{r, cache=TRUE, fig.height=12, fig.width=12}
+belt_group <- filter(melted_clean_train_df, grepl("belt", variable))
+
+ggplot(belt_group, aes(classe, value)) +
+    geom_boxplot(aes(fill=classe)) +
+    facet_wrap( ~ variable, scale="free_y") +
+    ggtitle("Boxplot variable group 'Belt'")
+```
+
+##### Forearm group boxplots
+
+```{r, cache=TRUE, fig.height=12, fig.width=12}
+forearm_group <- filter(melted_clean_train_df, grepl("forearm", variable))
+
+ggplot(forearm_group, aes(classe, value)) +
+    geom_boxplot(aes(fill=classe)) +
+    facet_wrap( ~ variable, scale="free_y") +
+    ggtitle("Boxplot variable group 'Forearm'")
+```
+
+
+##### Arm group boxplots
+
+```{r, cache=TRUE, fig.height=12, fig.width=12}
+arm_group <- filter(melted_clean_train_df, grepl("[^(fore)]arm", variable))
+
+ggplot(arm_group, aes(classe, value)) +
+    geom_boxplot(aes(fill=classe)) +
+    facet_wrap( ~ variable, scale="free_y") +
+    ggtitle("Boxplot variable group 'Arm'")
+```
+
+##### Dumbbell group boxplots
+
+```{r, cache=TRUE, fig.height=12, fig.width=12}
+dumbbell_group <- filter(melted_clean_train_df, grepl("dumbbell", variable))
+
+ggplot(dumbbell_group, aes(classe, value)) +
+    geom_boxplot(aes(fill=classe)) +
+    facet_wrap( ~ variable, scale="free_y") +
+    ggtitle("Boxplot variable group 'Dumbbell'")
+```
+
+#### 2. Correlation matrix
+
+```{r, cache=TRUE, fig.height=12, fig.width=12}
+train_corr <- cor(clean_train_df[sapply(clean_train_df, is.numeric)])
+corrplot(train_corr, method="ellipse")
+```
+
